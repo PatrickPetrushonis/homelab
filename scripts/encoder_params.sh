@@ -173,15 +173,28 @@ mkdir -p "$LOG_DIR"
 # ── Concurrency lock ──────────────────────────────────────────────────────────
 # Only one run may target a given OUTPUT_DIR at a time: two runs sharing it
 # would race on the same deterministic .tmp output path per input file, and
-# on the same Log_InProgress.txt. Exclusive, non-blocking; released
-# automatically on exit (fd 9 closes) — including on SIGINT/SIGTERM via the
-# cleanup trap below, since process exit closes all of its file descriptors.
+# on the same Log_InProgress.txt. Exclusive, non-blocking.
 LOCK_FILE="$OUTPUT_DIR/.media.lock"
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
     echo "ERROR: another run is already active against $OUTPUT_DIR (lock: $LOCK_FILE)" >&2
     exit 1
 fi
+# Registered only after successfully acquiring the lock (a failed acquisition
+# above exits before this line, so it never deletes another process's active
+# lock file). Removes the now-empty .lock file on any exit - normal
+# completion, a `set -e` error, or SIGINT/SIGTERM (the cleanup() handler
+# below calls `exit 1`, which still fires this EXIT trap; only SIGKILL skips
+# it, same limitation cleanup()'s own partial-output removal already has).
+# Releasing the fd alone (which happens automatically at process exit
+# regardless) frees the advisory lock; this additionally deletes the file so
+# OUTPUT_DIR doesn't accumulate a permanent empty lock file. Small accepted
+# race: if another process opens+locks this exact path in the instant
+# between this process finishing and this trap firing, the unlink here
+# would remove the path out from under it, and a third process could then
+# create a fresh file at the same path and lock that too. Negligible at the
+# scale of a single-user batch tool where runs are seconds apart at minimum.
+trap 'rm -f "$LOCK_FILE" 2>/dev/null || true' EXIT
 
 LOG_FILE_TEMP="$OUTPUT_DIR/Log_InProgress.txt"
 if [[ -f "$LOG_FILE_TEMP" ]]; then
