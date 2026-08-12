@@ -39,6 +39,8 @@
 #   • Both -M and -A mirror the same relative directory structure as the output
 #   • HEVC sources are always re-encoded to x264 and logged with the source codec label,
 #     since transcoding HEVC → x264 typically produces a larger file (see hevc sources note)
+#   • Only one run may target a given -o OUTPUT_DIR at a time; a second run against
+#     the same OUTPUT_DIR exits immediately instead of racing on shared .tmp/log files
 
 set -euo pipefail
 
@@ -161,11 +163,25 @@ require() { command -v "$1" &>/dev/null || { echo "ERROR: '$1' not found on PATH
 require ffmpeg
 require ffprobe
 require python3
+require flock
 
 # ── Directory and log setup ───────────────────────────────────────────────────
 mkdir -p "$OUTPUT_DIR"
 [[ -z "$LOG_DIR" ]] && LOG_DIR="$OUTPUT_DIR/Logs"
 mkdir -p "$LOG_DIR"
+
+# ── Concurrency lock ──────────────────────────────────────────────────────────
+# Only one run may target a given OUTPUT_DIR at a time: two runs sharing it
+# would race on the same deterministic .tmp output path per input file, and
+# on the same Log_InProgress.txt. Exclusive, non-blocking; released
+# automatically on exit (fd 9 closes) — including on SIGINT/SIGTERM via the
+# cleanup trap below, since process exit closes all of its file descriptors.
+LOCK_FILE="$OUTPUT_DIR/.media.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    echo "ERROR: another run is already active against $OUTPUT_DIR (lock: $LOCK_FILE)" >&2
+    exit 1
+fi
 
 LOG_FILE_TEMP="$OUTPUT_DIR/Log_InProgress.txt"
 if [[ -f "$LOG_FILE_TEMP" ]]; then
@@ -368,11 +384,12 @@ compute_output_path() {
 # ── Stream probe ──────────────────────────────────────────────────────────────
 probe_file() {
     local INPUT="$1"
-    python3 - "$INPUT" "$SUB_LANGS" << 'PYEOF'
+    python3 - "$INPUT" "$SUB_LANGS" "$LANG_TABLE_TSV" << 'PYEOF'
 import json, sys, subprocess
 
-input_file = sys.argv[1]
-sub_langs  = set(sys.argv[2].split(','))
+input_file    = sys.argv[1]
+sub_langs     = set(sys.argv[2].split(','))
+lang_table_tsv = sys.argv[3]
 
 result = subprocess.run(
     ['ffprobe', '-v', 'quiet', '-print_format', 'json', '-show_streams', input_file],
@@ -418,20 +435,29 @@ AUDIO_CODEC_NAMES = {
     'pcm_s32le':   'PCM',
 }
 
-LANG_NAMES = {
-    'eng': 'English',   'fra': 'French',    'fre': 'French',
-    'deu': 'German',    'ger': 'German',     'spa': 'Spanish',
-    'ita': 'Italian',   'jpn': 'Japanese',   'por': 'Portuguese',
-    'rus': 'Russian',   'zho': 'Chinese',    'chi': 'Chinese',
-    'kor': 'Korean',    'ara': 'Arabic',     'hin': 'Hindi',
-    'nld': 'Dutch',     'pol': 'Polish',     'swe': 'Swedish',
-    'nor': 'Norwegian', 'dan': 'Danish',     'fin': 'Finnish',
-    'tur': 'Turkish',   'heb': 'Hebrew',     'tha': 'Thai',
-    'vie': 'Vietnamese','ces': 'Czech',      'cze': 'Czech',
-    'slk': 'Slovak',    'hun': 'Hungarian',  'ron': 'Romanian',
-    'rum': 'Romanian',  'ukr': 'Ukrainian',  'cat': 'Catalan',
-    'hrv': 'Croatian',  'und': 'English',  # untagged tracks default to English
-}
+def load_lang_names(tsv_path):
+    """Reads the shared lang_table.tsv (also loaded by lang_table.sh for the
+    bash side). Maps every code3 and every listed alias to its display label."""
+    names = {}
+    try:
+        with open(tsv_path, encoding='utf-8') as f:
+            for line in f:
+                line = line.rstrip('\n')
+                if not line or line.startswith('#'):
+                    continue
+                parts = line.split('\t')
+                if len(parts) < 3:
+                    continue
+                code3, _code2, label = parts[0], parts[1], parts[2]
+                aliases = parts[3].split(',') if len(parts) > 3 and parts[3] != '-' else []
+                names[code3] = label
+                for alias in aliases:
+                    names[alias] = label
+    except OSError as e:
+        print(f"ERROR could not read lang_table_tsv ({tsv_path}): {e}", file=sys.stderr)
+    return names
+
+LANG_NAMES = load_lang_names(lang_table_tsv)
 
 def lang_name(code):
     return LANG_NAMES.get(code.lower(), code.upper())
@@ -550,36 +576,10 @@ subtitle_output_codec() {
 }
 
 # ── Sidecar subtitle support (Plex-style Movie.en.srt / Movie.en.cc.srt) ──────
-# LANG_TABLE is the single source for two things sidecar handling needs:
-#   - LANG_3TO2:      3-letter code (as used by -l/SUB_LANGS) → 2-letter
-#                      code, for matching Plex-style sidecar filenames
-#   - LANG_LABEL_BASH: 3-letter code → display label, for titling muxed
-#                      sidecar tracks
-# NOTE: this is a separate table from LANG_NAMES in the Python probe step
-# (see probe_file()). The two are not kept in sync automatically — Python's
-# table has a few extra ISO aliases (fre/ger/chi/cze/rum) that sidecar
-# filenames never use, so this table intentionally only carries the
-# canonical codes. Add a language to both if it needs to show up in
-# embedded-track titles as well as sidecar matching.
-declare -A LANG_TABLE=(
-    [eng]="en:English"    [fra]="fr:French"      [deu]="de:German"
-    [spa]="es:Spanish"    [ita]="it:Italian"     [jpn]="ja:Japanese"
-    [por]="pt:Portuguese" [rus]="ru:Russian"     [zho]="zh:Chinese"
-    [kor]="ko:Korean"     [ara]="ar:Arabic"      [hin]="hi:Hindi"
-    [nld]="nl:Dutch"      [pol]="pl:Polish"      [swe]="sv:Swedish"
-    [nor]="no:Norwegian"  [dan]="da:Danish"      [fin]="fi:Finnish"
-    [tur]="tr:Turkish"    [heb]="he:Hebrew"      [tha]="th:Thai"
-    [vie]="vi:Vietnamese" [ces]="cs:Czech"       [slk]="sk:Slovak"
-    [hun]="hu:Hungarian"  [ron]="ro:Romanian"    [ukr]="uk:Ukrainian"
-    [cat]="ca:Catalan"    [hrv]="hr:Croatian"
-)
-declare -A LANG_3TO2=() LANG_LABEL_BASH=()
-# Split each "en:English"-style value on ':' into the two derived tables.
-for _lk in "${!LANG_TABLE[@]}"; do
-    LANG_3TO2["$_lk"]="${LANG_TABLE[$_lk]%%:*}"
-    LANG_LABEL_BASH["$_lk"]="${LANG_TABLE[$_lk]#*:}"
-done
-unset _lk
+# LANG_TABLE, LANG_3TO2, and LANG_LABEL_BASH come from the shared
+# lang_table.sh / lang_table.tsv (same directory) — also the source the
+# Python probe step's LANG_NAMES reads (see probe_file()).
+source "$(dirname "${BASH_SOURCE[0]}")/lang_table.sh"
 
 # Looks for Movie.<lang2>.srt / Movie.<lang2>.cc.srt / Movie.<lang2>.sdh.srt /
 # Movie.<lang2>.forced.srt next to INPUT, for each target language in
