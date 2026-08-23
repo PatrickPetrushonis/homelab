@@ -2,7 +2,7 @@
 
 **Status: not started. No timeline.**
 
-Current state: batch-encoded output moves to the Synology DS220+ (which runs Plex and hosts the permanent media library — see `SYSTEM_ARCHITECTURE.md`) via a manual mount today, not a persistent one — nothing in `/etc/fstab`, no scripted transfer. This is intentional for the foreseeable future, not permanent. Automation is planned but deliberately deprioritized behind getting the local Linux environment (system tooling, `video-encoder`, local LLM/CLI setup) into a solid state first.
+Current state: batch-encoded output moves to the Synology DS220+ (which runs Plex and hosts the permanent media library — see `../system/System Architecture.md`) via a manual mount today, not a persistent one — nothing in `/etc/fstab`, no scripted transfer. This is intentional for the foreseeable future, not permanent. Automation is planned but deliberately deprioritized behind getting the local Linux environment (system tooling, `video-encoder`, local LLM/CLI setup) into a solid state first.
 
 This file exists so that intent isn't lost or re-litigated later — not as a plan.
 

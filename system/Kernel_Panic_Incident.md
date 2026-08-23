@@ -51,7 +51,7 @@ lsinitramfs /boot/initrd.img-7.0.0-29-generic | grep -i nvme   # driver present
 dpkg -l | grep -E "linux-image-7.0.0-29|linux-headers-7.0.0-29"  # both "ii"
 ```
 
-Rebooted directly into `7.0.0-29-generic` (not recovery mode) — boot succeeded. `nvidia-smi` confirmed the driver survived the kernel change; `dmesg` showed no new errors beyond expected/benign entries (self-signed module taint, ACPI `_PSL` evaluation warnings, one unexplained DIMM SPD read failure unrelated to this incident — see `SYSTEM_ARCHITECTURE.md`'s Known Gaps).
+Rebooted directly into `7.0.0-29-generic` (not recovery mode) — boot succeeded. `nvidia-smi` confirmed the driver survived the kernel change; `dmesg` showed no new errors beyond expected/benign entries (self-signed module taint, ACPI `_PSL` evaluation warnings, one unexplained DIMM SPD read failure unrelated to this incident — see `System Architecture.md`'s Known Gaps).
 
 ## Prevention / lessons
 

@@ -1,6 +1,6 @@
 # System Architecture
 
-Canonical reference for this machine's hardware, storage, network, and running services. Sourced from `scripts/system_inventory.sh` output — initial pass 2026-08-23, `sudo` rerun same day filling in privileged detail. `NVIDIA_Driver_Fix_Summary.md` and `Ollama_Docker_Debug_Reference.md` point here for hardware facts instead of duplicating them — update this file when hardware/config changes, not the others.
+Canonical reference for this machine's hardware, storage, network, and running services. Sourced from `system_inventory.sh` output (same directory) — initial pass 2026-08-23, `sudo` rerun same day filling in privileged detail. `NVIDIA_Driver_Fix_Summary.md` (same directory) and `../llm/Ollama_Docker_Debug_Reference.md` point here for hardware facts instead of duplicating them — update this file when hardware/config changes, not the others.
 
 ---
 
@@ -74,7 +74,7 @@ No NFS/CIFS mounts active; nothing in `/etc/fstab` references network storage.
 
 ### Synology DS220+ NAS
 
-**Role: permanent media library and Plex host.** Encoded video lives here long-term and Plex itself runs here, serving playback to clients over the LAN — this machine's own `/raid` is transient encoder working space, not the library. Full rationale in `DS220__RAID_1_Upgrade__8TB_to_16TB.md`.
+**Role: permanent media library and Plex host.** Encoded video lives here long-term and Plex itself runs here, serving playback to clients over the LAN — this machine's own `/raid` is transient encoder working space, not the library. Full rationale in `../nas/NAS_DS220_Upgrade_Guide.md`.
 
 **No persistent or automated mount to this machine** — nothing in `/etc/fstab`, no scripted transfer from the encoder/rename scripts. Batch-encoded output moves over via a manual mount when needed; `system_inventory.sh` showing no active mount just means it wasn't mounted at that moment, not that the workflow doesn't exist. Automating that transfer is a planned future phase, timeline undefined, after the local Linux environment is in a solid state.
 

@@ -2,7 +2,7 @@
 
 ## System Hardware
 
-See `SYSTEM_ARCHITECTURE.md` for the canonical hardware/storage/network reference. Summary as of 2026-08-23:
+See `../system/System Architecture.md` for the canonical hardware/storage/network reference. Summary as of 2026-08-23:
 
 | Component | Spec |
 |-----------|------|
