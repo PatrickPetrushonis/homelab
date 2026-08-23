@@ -93,6 +93,18 @@ mount | grep -E 'nfs|cifs' || echo "(no active NFS/CIFS mounts found — check /
 section "LAN NEIGHBOR CACHE (may reveal the NAS's IP/MAC if recently contacted)"
 ip neigh 2>/dev/null
 
+section "DEV TOOLCHAIN"
+echo "--- shell scripting ---"
+command -v bash &>/dev/null && bash --version | head -1
+command -v shellcheck &>/dev/null && shellcheck --version | grep version: || echo "shellcheck: not installed"
+echo "--- node / typescript (video-encoder's TS/GH-Pages workload) ---"
+command -v node &>/dev/null && node -v || echo "node: not installed"
+command -v npm &>/dev/null && npm -v || echo "npm: not installed"
+command -v npx &>/dev/null && npx --no-install tsc -v 2>/dev/null || echo "tsc: not found locally/globally (npx --no-install prevents an unwanted download here)"
+echo "--- other ---"
+command -v python3 &>/dev/null && python3 --version || echo "python3: not installed"
+command -v git &>/dev/null && git --version || echo "git: not installed"
+
 section "DOCKER STATE"
 docker ps -a 2>/dev/null || echo "(docker not available or permission denied — try sudo)"
 docker network ls 2>/dev/null
