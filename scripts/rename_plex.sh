@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# rename_plex.sh: Rename movie video/subtitle files (and optionally their
-#                  containing directories) into Plex naming convention.
-#                  Handles both already-Plex-formatted names and raw
-#                  scene-release names — see "Name parsing" below.
+# rename_plex.sh: Rename movie AND TV episode video/subtitle files (and
+#                  optionally their containing directories) into Plex naming
+#                  convention. Handles both already-Plex-formatted names and
+#                  raw scene-release names — see "Name parsing" below.
 #
 # Usage:  ./rename_plex.sh [OPTIONS] <target_dir>
 #
@@ -50,26 +50,58 @@
 # Name parsing:
 #   A name is split at its LAST standalone 4-digit year (1900-2099), bounded
 #   on both sides by a non-alphanumeric character or string edge - so 2160p
-#   (resolution) and x265 (codec) never match, but "2015" in
-#   "... U N C L E 2015 1080p BluRay x265-YAWNTiC" does. Everything before
+#   (resolution) and x265 (codec) never match, but a bare year like "2015"
+#   in "Movie Title 2015 1080p BluRay x265-GROUP" does. Everything before
 #   the year is the title; everything after is release-tag junk (resolution,
 #   source, codec, release group) and is discarded rather than parsed, since
 #   discarding doesn't require knowing every tag vocabulary in use. This also
-#   handles the already-Plex-formatted case ("Movie (2020)") unchanged, since
+#   handles the already-Plex-formatted case ("Title (2020)") unchanged, since
 #   parentheses are non-alphanumeric boundaries too.
-#   Before year detection: bracketed tags anywhere (e.g. "[YTS.MX]") are
+#   Before year detection: bracketed tags anywhere (e.g. "[TRACKER]") are
 #   stripped, and a leading site-announcement prefix (e.g.
-#   "www.UIndex.org    -    ") is stripped from the start of the name.
+#   "www.example.org    -    ") is stripped from the start of the name.
 #   Known limitation: if a title itself contains a 4-digit number that looks
-#   like a year (e.g. "Blade Runner 2049"), the LAST standalone year in the
-#   string wins, which is correct as long as the real release year appears
-#   after the title (true for every case tested, including that one - the
-#   2049 stays in the title, the actual 2017 release year is the year used).
+#   like a year (e.g. a title such as "Movie 2049"), the LAST standalone
+#   year in the string wins, which is correct as long as the real release
+#   year appears after the title (true for every case tested, including
+#   that one - the in-title number stays in the title, the actual later
+#   release year is the year used).
 #   A title ending in a real year with nothing after it (e.g. a file already
 #   named exactly "Movie 2049.mkv" for a movie actually titled "Movie") is
 #   the one case this can't disambiguate; that's not distinguishable from a
 #   correct match without an external metadata lookup, which this script
 #   deliberately doesn't do.
+#
+# TV episodes:
+#   A name is routed to episode parsing instead of movie parsing if it
+#   contains a standalone SxxEyy token (S + 1-2 digit season, E + 1-3 digit
+#   episode), checked BEFORE year-based movie parsing runs at all - so a
+#   show whose title itself is a bare year (e.g. a show titled "1904") is
+#   never misparsed as a movie. Everything before SxxEyy is the series title
+#   (junk-stripped like a movie title); season/episode are zero-padded from
+#   the token itself. Output: "Series - SxxEyy - Episode Title.ext", or just
+#   "Series - SxxEyy.ext" with no title segment - see below for why.
+#   Episode title is genuinely harder than a movie's year: there's no
+#   structural anchor marking where a title ends and release-tag junk
+#   begins, since scene-release TV naming almost always omits the episode
+#   title entirely and goes straight from SxxEyy to quality tags. This uses
+#   the presence of a literal hyphen in the separator immediately after
+#   SxxEyy as that anchor: "S03E01 - Real Title" keeps everything after as
+#   the title; "S03E01.1080p.WEB-DL.x264-GROUP" (no hyphen right after the
+#   token) discards everything after, same as movie junk. Known limitation:
+#   a raw release that includes BOTH a real episode title AND trailing
+#   quality tags, hyphen-delimited from SxxEyy (e.g. "S03E01 - Title
+#   1080p WEB-DL x264-GROUP"), has no way to tell where the title ends and
+#   the tags begin without either enumerating tag vocabulary (which this
+#   script deliberately avoids elsewhere) or an external episode-title
+#   database - the whole trailing text is kept as-is in that case.
+#   Multi-episode files (S01E01E02) and absolute-numbered releases with no
+#   S/E letters are not recognized; treated as NO_MATCH, not guessed at.
+#   Directory handling differs from movies: an episode's own containing
+#   folder is a "Season NN" folder, not the show itself, so it is never
+#   touched by the directory pass. The show-root folder (one level further
+#   up) is tracked instead and renamed with the same movie-style
+#   title + year logic a standalone movie folder gets.
 
 set -euo pipefail
 
@@ -193,25 +225,31 @@ normalize_modifier() {
     esac
 }
 
-# Core name parser. Sets PARSED_OK, PARSED_TITLE, PARSED_YEAR, PARSED_EDITION
-# from a name with no extension (a file basename with its extension already
-# stripped, or a directory basename). See "Name parsing" in the header
-# comment for the heuristic. PARSED_OK=0 means no usable year was found; the
-# other PARSED_* vars are meaningless in that case.
+# Shared preprocessing for both parse_media_name and parse_episode_name.
+# Strips bracketed release-tracker tags anywhere (e.g. "[TRACKER]" -
+# movie/show titles essentially never contain literal square brackets, so
+# this is safe unconditionally) and a leading site-announcement prefix (e.g.
+# "www.example.org    -    " - requires a domain-like token followed by
+# whitespace-hyphen-whitespace, so it won't eat a legitimate title that
+# happens to start with a hyphenated phrase). Run once by the caller before
+# branching on movie vs. episode, so the episode-detection check itself
+# also sees the cleaned name, not just whichever parser runs after it.
+strip_junk_prefixes() {
+    local s="$1"
+    s="$(sed -E 's/\[[^][]*\]//g' <<< "$s")"
+    s="$(sed -E 's/^(www\.)?[A-Za-z0-9-]+\.[A-Za-z]{2,}[[:space:]]*-[[:space:]]*//' <<< "$s")"
+    echo "$s"
+}
+
+# Core name parser for MOVIES. Sets PARSED_OK, PARSED_TITLE, PARSED_YEAR,
+# PARSED_EDITION from an already-prefix-stripped name with no extension (a
+# file basename with its extension already stripped, or a directory
+# basename). See "Name parsing" in the header comment for the heuristic.
+# PARSED_OK=0 means no usable year was found; the other PARSED_* vars are
+# meaningless in that case.
 parse_media_name() {
     local raw="$1"
     PARSED_OK=0; PARSED_TITLE=""; PARSED_YEAR=""; PARSED_EDITION=""
-
-    # Strip bracketed release-tracker tags anywhere, e.g. [YTS.MX], [rarbg].
-    # Movie titles essentially never contain literal square brackets, so
-    # this is safe to apply unconditionally.
-    raw="$(sed -E 's/\[[^][]*\]//g' <<< "$raw")"
-
-    # Strip a leading site-announcement prefix, e.g. "www.UIndex.org    -    ".
-    # Requires a domain-like token (word.tld) followed by whitespace-hyphen-
-    # whitespace, so it won't eat a legitimate title that happens to start
-    # with a hyphenated phrase.
-    raw="$(sed -E 's/^(www\.)?[A-Za-z0-9-]+\.[A-Za-z]{2,}[[:space:]]*-[[:space:]]*//' <<< "$raw")"
 
     # Extract {edition-X} wherever it appears (rare outside already-Plex-
     # formatted names, but scanned unconditionally rather than assumed
@@ -245,6 +283,116 @@ parse_media_name() {
     PARSED_YEAR="$year_match"
     PARSED_OK=1
 }
+
+# Detects whether an already-prefix-stripped name is TV-episode-shaped:
+# looks for a standalone SxxEyy token (S, 1-2 digit season, E, 1-3 digit
+# episode; bounded by non-alphanumeric the same way the movie parser
+# bounds years, so "S03E01" matches but nothing inside a longer alnum run
+# does). Checked BEFORE year-based movie parsing runs at all, not as a
+# fallback after it - so a show whose title happens to be a bare year
+# (e.g. a show titled "1904") is still routed to the episode parser, never
+# misparsed as a movie. Multi-episode files (S01E01E02) and absolute-
+# numbered releases with no S/E letters (common in some long-running
+# anime) are NOT recognized - deliberately, consistent with this script's
+# "skip rather than guess" philosophy elsewhere: treated as NO_MATCH, not
+# force-fit.
+is_episode_shaped() {
+    grep -qP '(?<![0-9A-Za-z])[Ss][0-9]{1,2}[Ee][0-9]{1,3}(?![0-9A-Za-z])' <<< "$1"
+}
+
+# Core name parser for TV EPISODES. Sets PARSED_OK, PARSED_SERIES,
+# PARSED_SEASON, PARSED_EPISODE, PARSED_EPTITLE, PARSED_EDITION from an
+# already-prefix-stripped name with no extension. Only call this after
+# is_episode_shaped has confirmed an SxxEyy token is present.
+#
+# Series title = everything before the SxxEyy token (junk-stripped the same
+# way movie titles are, plus a redundant trailing year stripped out - Plex
+# episode filenames never carry the year, unlike movie filenames; see the
+# guard against stripping a show that's actually just named after a year,
+# e.g. a show titled "1904", in the code below). Season/episode = the
+# digits inside the token, zero-padded to at least 2 digits each (avoiding
+# bash's octal trap on inputs like "08"/"09" via the 10# base-10 forcing
+# prefix).
+#
+# Episode title is the hard part: unlike a movie's year, SxxEyy has no
+# structural signal marking where a real trailing episode title ends and
+# release-tag junk (resolution/source/codec/group) begins - scene-release
+# TV naming almost always omits the episode title entirely and goes
+# straight from SxxEyy to quality tags, while an already-Plex-formatted
+# name puts " - Episode Title" right after it with nothing further. This
+# uses that distinction as its own anchor: if what immediately follows
+# SxxEyy is a run of separators (space/dot/underscore) THAT INCLUDES A
+# LITERAL HYPHEN, everything after is treated as the episode title;
+# otherwise everything after is discarded as junk, same as a movie's
+# trailing tags. This mirrors the movie parser's approach of using a
+# structural anchor instead of enumerating junk vocabulary, but it is a
+# heuristic, not a guarantee - see the known limitation this creates,
+# noted in the header comment.
+parse_episode_name() {
+    local raw="$1"
+    PARSED_OK=0; PARSED_SERIES=""; PARSED_SEASON=""; PARSED_EPISODE=""
+    PARSED_EPTITLE=""; PARSED_EDITION=""
+
+    local match offset
+    match="$(grep -oP '(?<![0-9A-Za-z])[Ss][0-9]{1,2}[Ee][0-9]{1,3}(?![0-9A-Za-z])' <<< "$raw" | head -1)" || true
+    [[ -z "$match" ]] && return
+
+    offset="$(grep -boP '(?<![0-9A-Za-z])'"$match"'(?![0-9A-Za-z])' <<< "$raw" | head -1)" || true
+    [[ -z "$offset" ]] && return
+    offset="${offset%%:*}"
+
+    [[ "$match" =~ ^[Ss]([0-9]{1,2})[Ee]([0-9]{1,3})$ ]] || return
+    local season="${BASH_REMATCH[1]}" episode="${BASH_REMATCH[2]}"
+
+    local series_raw="${raw:0:$offset}"
+
+    # Strip a redundant year from the series-title segment: Plex episode
+    # filenames don't carry the year (only the show-root folder does), but
+    # raw releases commonly repeat it right before SxxEyy anyway (e.g.
+    # "Show Title (2019) S03E13..." or "Show.Title.2019.S03E13...").
+    # Uses the same last-standalone-year detection as the movie parser.
+    # Guarded: if stripping would leave nothing meaningful behind, the
+    # strip is discarded and the year stays in the title - this is what
+    # keeps a show actually named after a year (e.g. a show titled "1904")
+    # intact, since there the "year" IS the whole title, not a redundant
+    # repeat.
+    local series_year_match series_year_offset
+    series_year_match="$(grep -oP '(?<![0-9A-Za-z])(19[0-9]{2}|20[0-9]{2})(?![0-9A-Za-z])' <<< "$series_raw" | tail -1)" || true
+    if [[ -n "$series_year_match" ]]; then
+        series_year_offset="$(grep -boP '(?<![0-9A-Za-z])'"$series_year_match"'(?![0-9A-Za-z])' <<< "$series_raw" | tail -1)" || true
+        if [[ -n "$series_year_offset" ]]; then
+            series_year_offset="${series_year_offset%%:*}"
+            local candidate="${series_raw:0:$series_year_offset}"
+            candidate="${candidate%(}"
+            if [[ -n "$(tr -d '[:space:]._-' <<< "$candidate")" ]]; then
+                series_raw="$candidate"
+            fi
+        fi
+    fi
+
+    local series_part
+    series_part="$(tr '._' '  ' <<< "$series_raw" | tr -s ' ')"
+    series_part="$(sed -E 's/^[[:space:]-]+//; s/[[:space:]-]+$//' <<< "$series_part")"
+    [[ -z "$series_part" ]] && return
+
+    local rest_part="${raw:$(( offset + ${#match} ))}"
+    if [[ "$rest_part" =~ ^[[:space:]._]*-[[:space:]._]*(.+)$ ]]; then
+        local ep_title="${BASH_REMATCH[1]}"
+        if [[ "$ep_title" =~ \{edition-([^}]+)\} ]]; then
+            PARSED_EDITION="${BASH_REMATCH[1]}"
+            ep_title="${ep_title/${BASH_REMATCH[0]}/}"
+        fi
+        ep_title="$(tr '._' '  ' <<< "$ep_title" | tr -s ' ')"
+        ep_title="$(sed -E 's/^[[:space:]-]+//; s/[[:space:]-]+$//' <<< "$ep_title")"
+        PARSED_EPTITLE="$ep_title"
+    fi
+
+    PARSED_SERIES="$series_part"
+    PARSED_SEASON="$(printf '%02d' "$((10#$season))")"
+    PARSED_EPISODE="$(printf '%02d' "$((10#$episode))")"
+    PARSED_OK=1
+}
+
 
 # Subtitle language/modifier extraction. Decoupled from parse_media_name
 # entirely: operates on the raw name's trailing dot-segments before the
@@ -416,28 +564,64 @@ while IFS= read -r -d '' FILE_PATH; do
         WORKING_NAME="$SUB_TAG_STRIPPED_NAME"
     fi
 
-    # 2. TITLE / YEAR / EDITION
-    parse_media_name "$WORKING_NAME"
+    # 2. STRIP SHARED JUNK (brackets, site-prefix), THEN BRANCH: episode
+    #    detection runs first and unconditionally, so a title containing a
+    #    bare year is never misrouted into movie parsing (see
+    #    is_episode_shaped's own comment).
+    WORKING_NAME_STRIPPED="$(strip_junk_prefixes "$WORKING_NAME")"
+    IS_EPISODE=0
+    if is_episode_shaped "$WORKING_NAME_STRIPPED"; then
+        IS_EPISODE=1
+        parse_episode_name "$WORKING_NAME_STRIPPED"
+    else
+        parse_media_name "$WORKING_NAME_STRIPPED"
+    fi
+
     if [[ $PARSED_OK -ne 1 ]]; then
-        echo "NO MATCH (no valid year found): $FILE_NAME"
-        log "NO MATCH: $FILE_NAME"
+        if (( IS_EPISODE )); then
+            echo "NO MATCH (episode-shaped but unparseable): $FILE_NAME"
+            log "NO MATCH: $FILE_NAME"
+        else
+            echo "NO MATCH (no valid year found): $FILE_NAME"
+            log "NO MATCH: $FILE_NAME"
+        fi
         NO_MATCH=$(( NO_MATCH + 1 ))
         continue
     fi
-    MATCHED_DIRS["$FILE_DIR"]=1
+
+    # A movie's own directory holds just that movie; an episode's own
+    # directory is a "Season NN" folder, not the show - the show-root
+    # folder is one level further up. Track whichever is the actual
+    # title/year-shaped ancestor, so the directory pass (movie-style
+    # parsing) never runs against "Season NN" itself.
+    if (( IS_EPISODE )); then
+        MATCHED_DIRS["$(dirname "$FILE_DIR")"]=1
+    else
+        MATCHED_DIRS["$FILE_DIR"]=1
+    fi
 
     # 3. REBUILD
-    if [[ -n "$PARSED_EDITION" ]]; then
-        CLEAN_PLEX_NAME="$PARSED_TITLE ($PARSED_YEAR) {edition-$PARSED_EDITION}"
+    if (( IS_EPISODE )); then
+        CLEAN_PLEX_NAME="$PARSED_SERIES - S${PARSED_SEASON}E${PARSED_EPISODE}"
+        [[ -n "$PARSED_EPTITLE" ]] && CLEAN_PLEX_NAME="$CLEAN_PLEX_NAME - $PARSED_EPTITLE"
+        [[ -n "$PARSED_EDITION" ]] && CLEAN_PLEX_NAME="$CLEAN_PLEX_NAME {edition-$PARSED_EDITION}"
     else
-        CLEAN_PLEX_NAME="$PARSED_TITLE ($PARSED_YEAR)"
+        if [[ -n "$PARSED_EDITION" ]]; then
+            CLEAN_PLEX_NAME="$PARSED_TITLE ($PARSED_YEAR) {edition-$PARSED_EDITION}"
+        else
+            CLEAN_PLEX_NAME="$PARSED_TITLE ($PARSED_YEAR)"
+        fi
     fi
     NEW_FILE_NAME="${CLEAN_PLEX_NAME}${SUB_LANG_TAG}.${FILE_EXT_LOWER}"
     NEW_FILE_PATH="${FILE_DIR}/${NEW_FILE_NAME}"
 
     [[ "$FILE_NAME" == "$NEW_FILE_NAME" ]] && continue
 
-    echo "  Cached Data:   Name: '$PARSED_TITLE' | Year: '$PARSED_YEAR' | Edition: '$PARSED_EDITION' | Lang: '$SUB_LANG_TAG'"
+    if (( IS_EPISODE )); then
+        echo "  Cached Data:   Series: '$PARSED_SERIES' | S${PARSED_SEASON}E${PARSED_EPISODE} | Title: '$PARSED_EPTITLE' | Edition: '$PARSED_EDITION' | Lang: '$SUB_LANG_TAG'"
+    else
+        echo "  Cached Data:   Name: '$PARSED_TITLE' | Year: '$PARSED_YEAR' | Edition: '$PARSED_EDITION' | Lang: '$SUB_LANG_TAG'"
+    fi
     TYPE_LABEL="Video"
     (( IS_SUBTITLE )) && TYPE_LABEL="Subtitle"
 
@@ -447,9 +631,13 @@ while IFS= read -r -d '' FILE_PATH; do
 done < <(find "$TARGET_DIR" -type f -regextype posix-extended -iregex ".*\.(${ALL_EXTS})$" -print0 | sort -z)
 
 # Directory pass. Runs after all file renames complete, over the set of
-# directories that contained at least one successfully-parsed file. Each
-# directory's own basename is parsed the same way a file's is (minus
-# subtitle/extension handling, which doesn't apply to directories).
+# directories that are the title/year-shaped ancestor of at least one
+# successfully-parsed file: a movie's own folder, or a show's root folder
+# (one level above "Season NN" for episodes - see the main loop's
+# MATCHED_DIRS population). "Season NN" folders themselves are never in
+# this set and are never touched. Always parsed as movie/show-style
+# (title + year), never as episode-style - a directory basename has no
+# extension and isn't itself an episode file.
 if (( RENAME_DIRS )) && [[ ${#MATCHED_DIRS[@]} -gt 0 ]]; then
     echo ""
     echo "=== Directory pass ==="
@@ -457,7 +645,7 @@ if (( RENAME_DIRS )) && [[ ${#MATCHED_DIRS[@]} -gt 0 ]]; then
         DIR_BASE="$(basename "$DIR_PATH")"
         DIR_PARENT="$(dirname "$DIR_PATH")"
 
-        parse_media_name "$DIR_BASE"
+        parse_media_name "$(strip_junk_prefixes "$DIR_BASE")"
         if [[ $PARSED_OK -ne 1 ]]; then
             continue
         fi
