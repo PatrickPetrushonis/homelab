@@ -75,11 +75,15 @@ Defines, from a single `VIDEOS_BASE` (default `$HOME/Videos`):
 
 No paths or usernames are hardcoded — everything derives from `$HOME` unless overridden.
 
+On the primary machine, `$HOME/Videos` resolves onto `/raid` — an mdadm RAID 1 array (`/dev/md0`, ext4) across two 8TB drives. See `SYSTEM_ARCHITECTURE.md` for the full storage/hardware/network reference.
+
 ## Concurrency lock
 
-`encoder_params.sh` and `rename_plex.sh` each take their own exclusive, non-blocking `flock` on the directory they operate on — `OUTPUT_DIR` for the encoder, the target directory for the renamer — as `<dir>/.media.lock`, immediately after validating that directory exists. A second run against the same directory, from any invocation path (the wrappers, or either script called directly), exits immediately with an error instead of racing. The lock releases automatically when the process exits, including on Ctrl-C.
+`encoder_params.sh` and `rename_plex.sh` each take their own exclusive, non-blocking `flock`, immediately after validating the directory they operate on exists. A second run against the same directory, from any invocation path (the wrappers, or either script called directly), exits immediately with an error instead of racing. The lock releases automatically when the process exits, including on Ctrl-C.
 
-Both scripts use the same lock filename convention, so a rename and an encode pointed at the same directory block each other too — not just same-script collisions. Runs against different directories are unaffected and can run concurrently.
+Neither script's lock (or logs) live inside `TARGET_DIR`/the movie library — both route through `OUTPUT_DIR`, config.sh's shared working directory:
+- `encoder_params.sh` locks `OUTPUT_DIR/.media.lock` and logs to `OUTPUT_DIR/Logs`, since `OUTPUT_DIR` is a working/encoding area, not a curated library.
+- `rename_plex.sh` takes an `-O DIR` flag (operational directory) for the same purpose: `rename.sh`/`rename_dry.sh` pass `-O "$OUTPUT_DIR"`, so its lock (`OUTPUT_DIR/.locks/<hash-of-target>.lock`) and logs (`OUTPUT_DIR/Logs`) land in the same place the encoder already uses — one shared operational area instead of two. Since `rename_plex.sh` can also run standalone against any target, `-O` defaults to the script's own directory when omitted, so it never falls back to writing into the target either way.
 
 `config.sh` and the four wrappers contain no locking logic — they're path/flag plumbing only. Either script can be run standalone, without going through a wrapper, and is still protected.
 
