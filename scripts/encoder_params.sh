@@ -126,7 +126,7 @@ validate_params() {
     fi
 
     local valid_presets="ultrafast superfast veryfast faster fast medium slow slower veryslow"
-    if [[ ! " $valid_presets " =~ " $PRESET " ]]; then
+    if [[ ! " $valid_presets " == *" $PRESET "* ]]; then
         echo "ERROR: Invalid preset '$PRESET'. Valid: $valid_presets" >&2
         (( errors++ )) || true
     fi
@@ -325,6 +325,7 @@ collect_files() {
                      -print0 | sort -z)
     else
         shopt -s nullglob nocaseglob
+        # shellcheck disable=SC2206  # intentional: $TARGET is a glob pattern, meant to word-split/expand here
         local -a MATCHES=($TARGET)
         shopt -u nullglob nocaseglob
         if [[ ${#MATCHES[@]} -eq 0 ]]; then
@@ -385,7 +386,7 @@ compute_output_path() {
         echo "${OUTPUT_DIR}/${BASENAME}.${OUT_FORMAT}"
     else
         local REL_DIR
-        REL_DIR="$(dirname "${INPUT#${ROOT}/}")"
+        REL_DIR="$(dirname "${INPUT#"${ROOT}"/}")"
         if [[ "$REL_DIR" == "." ]]; then
             echo "${OUTPUT_DIR}/${BASENAME}.${OUT_FORMAT}"
         else
@@ -592,6 +593,7 @@ subtitle_output_codec() {
 # LANG_TABLE, LANG_3TO2, and LANG_LABEL_BASH come from the shared
 # lang_table.sh / lang_table.tsv (same directory) — also the source the
 # Python probe step's LANG_NAMES reads (see probe_file()).
+# shellcheck source=./lang_table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lang_table.sh"
 
 # Looks for Movie.<lang2>.srt / Movie.<lang2>.cc.srt / Movie.<lang2>.sdh.srt /
@@ -646,7 +648,7 @@ archive_output() {
     local ROOT="$2"
     local DEST_BASE="$3"
 
-    local REL="${SRC#${OUTPUT_DIR}/}"
+    local REL="${SRC#"${OUTPUT_DIR}"/}"
     local DEST="${DEST_BASE}/${REL}"
     local DEST_DIR
     DEST_DIR="$(dirname "$DEST")"
@@ -699,7 +701,7 @@ backup_input() {
     local ROOT="$2"
     local DEST_BASE="$3"
 
-    local REL="${SRC#${ROOT}/}"
+    local REL="${SRC#"${ROOT}"/}"
     local DEST="${DEST_BASE}/${REL}"
     local DEST_DIR
     DEST_DIR="$(dirname "$DEST")"
@@ -729,8 +731,8 @@ backup_input() {
 # DEST_BASE as its last two args; preceding args are "LANG TYPE PATH" lines
 # from discover_sidecar_subs (may be zero of them).
 backup_sidecar_subs() {
-    local ROOT="${@: -2:1}"
-    local DEST_BASE="${@: -1}"
+    local ROOT="${*: -2:1}"
+    local DEST_BASE="${*: -1}"
     local -a LINES=()
     if [[ $# -gt 2 ]]; then
         LINES=("${@:1:$#-2}")
@@ -741,7 +743,7 @@ backup_sidecar_subs() {
         local _lang _type SIDECAR_SRC
         read -r _lang _type SIDECAR_SRC <<< "$line"
 
-        local REL="${SIDECAR_SRC#${ROOT}/}"
+        local REL="${SIDECAR_SRC#"${ROOT}"/}"
         local DEST="${DEST_BASE}/${REL}"
         local DEST_DIR
         DEST_DIR="$(dirname "$DEST")"
@@ -765,6 +767,7 @@ backup_sidecar_subs() {
 
 # ── build_video_args ──────────────────────────────────────────────────────────
 build_video_args() {
+    # shellcheck disable=SC2178  # false positive: -n declares a fresh nameref scoped to this function, not a reassignment of a prior array
     local -n _FF="$1"
     local VID_CODEC="$2" SRC_HEIGHT="$3" SRC_FPS="$4"
     local OUT_HEIGHT VID_TITLE
@@ -802,6 +805,7 @@ build_video_args() {
 
 # ── build_audio_args ──────────────────────────────────────────────────────────
 build_audio_args() {
+    # shellcheck disable=SC2178  # false positive: -n declares a fresh nameref scoped to this function, not a reassignment of a prior array
     local -n _FF="$1"
     shift
     local -a AUDIO_LINES=("$@")
@@ -822,20 +826,21 @@ build_audio_args() {
         _FF+=(-map "0:${SRC_IDX}")
         if [[ -n "${COPY_SET[$ACODEC]+_}" ]]; then
             echo " Audio[src:$SRC_IDX → out:$OUT_AUDIO_IDX]: COPY ($ACODEC / $LANG)"
-            _FF+=(-c:a:${OUT_AUDIO_IDX} copy)
+            _FF+=("-c:a:${OUT_AUDIO_IDX}" copy)
         else
             echo " Audio[src:$SRC_IDX → out:$OUT_AUDIO_IDX]: ENCODE → aac @ ${AUDIO_BITRATE} (source: $ACODEC / $LANG)"
-            _FF+=(-c:a:${OUT_AUDIO_IDX} aac -b:a:${OUT_AUDIO_IDX} "$AUDIO_BITRATE")
+            _FF+=("-c:a:${OUT_AUDIO_IDX}" aac "-b:a:${OUT_AUDIO_IDX}" "$AUDIO_BITRATE")
             AUDIO_TITLE="AAC ${AUDIO_TITLE#* }"  # replace codec, keep language + layout
         fi
-        _FF+=(-metadata:s:a:${OUT_AUDIO_IDX} "language=${LANG}")
-        _FF+=(-metadata:s:a:${OUT_AUDIO_IDX} "title=${AUDIO_TITLE}")
+        _FF+=("-metadata:s:a:${OUT_AUDIO_IDX}" "language=${LANG}")
+        _FF+=("-metadata:s:a:${OUT_AUDIO_IDX}" "title=${AUDIO_TITLE}")
         OUT_AUDIO_IDX=$(( OUT_AUDIO_IDX + 1 ))
     done
 }
 
 # ── build_subtitle_args ───────────────────────────────────────────────────────
 build_subtitle_args() {
+    # shellcheck disable=SC2178  # false positive: -n declares a fresh nameref scoped to this function, not a reassignment of a prior array
     local -n _FF="$1"
     local -n _OUT_IDX="$2"
     shift 2
@@ -882,17 +887,17 @@ build_subtitle_args() {
 
         _FF+=(
             -map "0:${SRC_IDX}"
-            -c:s:${_OUT_IDX} "$OUT_SUB_CODEC"
-            -metadata:s:s:${_OUT_IDX} "language=${LANG}"
-            -metadata:s:s:${_OUT_IDX} "title=${SUB_TITLE}"
+            "-c:s:${_OUT_IDX}" "$OUT_SUB_CODEC"
+            "-metadata:s:s:${_OUT_IDX}" "language=${LANG}"
+            "-metadata:s:s:${_OUT_IDX}" "title=${SUB_TITLE}"
         )
 
         if [[ "$IS_FORCED" == "1" ]]; then
-            _FF+=(-disposition:s:${_OUT_IDX} forced)
+            _FF+=("-disposition:s:${_OUT_IDX}" forced)
         elif [[ "$IS_CC" == "1" ]]; then
-            _FF+=(-disposition:s:${_OUT_IDX} hearing_impaired)
+            _FF+=("-disposition:s:${_OUT_IDX}" hearing_impaired)
         else
-            _FF+=(-disposition:s:${_OUT_IDX} 0)
+            _FF+=("-disposition:s:${_OUT_IDX}" 0)
         fi
 
         _OUT_IDX=$(( _OUT_IDX + 1 ))
@@ -906,6 +911,7 @@ build_subtitle_args() {
 # tracks are numbered continuously and are indistinguishable in the output.
 # Takes: ff_ref idx_ref, then "LANG TYPE PATH INPUT_IDX" lines.
 build_external_subtitle_args() {
+    # shellcheck disable=SC2178  # false positive: -n declares a fresh nameref scoped to this function, not a reassignment of a prior array
     local -n _FF="$1"
     local -n _OUT_IDX="$2"
     shift 2
@@ -931,15 +937,15 @@ build_external_subtitle_args() {
 
         _FF+=(
             -map "${SIDECAR_INPUT_IDX}:0"
-            -c:s:${_OUT_IDX} "$OUT_SUB_CODEC"
-            -metadata:s:s:${_OUT_IDX} "language=${LANG}"
-            -metadata:s:s:${_OUT_IDX} "title=${SUB_TITLE}"
+            "-c:s:${_OUT_IDX}" "$OUT_SUB_CODEC"
+            "-metadata:s:s:${_OUT_IDX}" "language=${LANG}"
+            "-metadata:s:s:${_OUT_IDX}" "title=${SUB_TITLE}"
         )
 
         case "$TYPE" in
-            forced) _FF+=(-disposition:s:${_OUT_IDX} forced) ;;
-            cc)     _FF+=(-disposition:s:${_OUT_IDX} hearing_impaired) ;;
-            *)      _FF+=(-disposition:s:${_OUT_IDX} 0) ;;
+            forced) _FF+=("-disposition:s:${_OUT_IDX}" forced) ;;
+            cc)     _FF+=("-disposition:s:${_OUT_IDX}" hearing_impaired) ;;
+            *)      _FF+=("-disposition:s:${_OUT_IDX}" 0) ;;
         esac
 
         _OUT_IDX=$(( _OUT_IDX + 1 ))
@@ -970,6 +976,7 @@ log_ffmpeg_warnings() {
 # ── execute_encode ────────────────────────────────────────────────────────────
 execute_encode() {
     local INPUT="$1" OUTPUT="$2" OUTPUT_TMP="$3" OUTPUT_DIR_FOR_FILE="$4" ROOT="$5" SRC_CODEC_LABEL="$6"
+    # shellcheck disable=SC2178  # false positive: -n declares a fresh nameref scoped to this function, not a reassignment of a prior array
     local -n _FF="$7"
     local -n _CF="$8"
     local -n _EXTSUB="$9"

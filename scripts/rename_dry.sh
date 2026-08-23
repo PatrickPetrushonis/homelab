@@ -2,11 +2,11 @@
 # Run this FIRST. Preview only — nothing is renamed.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+# shellcheck source=./config.sh
 source ./config.sh
 
-: "${DOWNLOADS_BASE:=$HOME/Downloads}"
-
-INPUT_DIR="$DOWNLOADS_BASE/Complete"
-OUTPUT_DIR="$DOWNLOADS_BASE/Logs"
-
-./rename_plex.sh -n -O "$OUTPUT_DIR" "$INPUT_DIR"
+# Passed as -O's base, not the log dir directly: rename_plex.sh appends
+# /Logs and /.locks itself, so this becomes $DOWNLOADS_BASE/Logs and
+# $DOWNLOADS_BASE/.locks — passing ".../Logs" here would have doubled up
+# into ".../Logs/Logs".
+./rename_plex.sh -n -O "$DOWNLOADS_BASE" "$DOWNLOADS_INPUT_DIR"

@@ -10,6 +10,15 @@
 #   LANG_LABEL_BASH code3 -> Label           (embedded/sidecar track titles)
 #   LANG_ALIASES    any lowercase code (2-letter, 3-letter, or listed alias)
 #                   -> code2                 (rename_plex.sh normalization)
+#
+# shellcheck disable=SC2034
+# File-wide: every array here is written in this file and read only by
+# encoder_params.sh and rename_plex.sh, which source this file — shellcheck
+# can't see across that boundary when checking this file standalone (-x/
+# follow-sources only traces what a file itself sources, not who sources it
+# back). LANG_TABLE specifically is the one exception actually unread by
+# name anywhere, kept intentionally as the pre-centralization "code2:Label"
+# format for any future consumer that wants the combined form.
 
 # Include guard: safe to source twice (e.g. a future single-entry-point
 # script sourcing both encoder_params.sh and rename_plex.sh in one process).

@@ -207,6 +207,7 @@ SUB_EXTS="srt|vtt|ass|idx|sub"
 ALL_EXTS="${VIDEO_EXTS}|${SUB_EXTS}"
 
 # Language alias table - shared with encoder_params.sh, same directory.
+# shellcheck source=./lang_table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lang_table.sh"
 
 normalize_lang() {
