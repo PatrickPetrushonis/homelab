@@ -1,0 +1,16 @@
+[submodule "nas"]
+	path = nas
+	url = https://github.com/PatrickPetrushonis/nas.git
+	branch = main
+[submodule "plex"]
+	path = plex
+	url = https://github.com/PatrickPetrushonis/plex.git
+	branch = main
+[submodule "system"]
+	path = system
+	url = https://github.com/PatrickPetrushonis/system.git
+	branch = main
+[submodule "llm"]
+	path = llm
+	url = https://github.com/PatrickPetrushonis/llm.git
+	branch = main
