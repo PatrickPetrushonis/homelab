@@ -33,12 +33,25 @@ fi
 
 WORK_DIR="$(dirname "$HOMELAB_DIR")/_submodule_split_work"
 
+# Refuse to proceed on a dirty tree. Uncommitted changes are invisible to
+# `git clone` (it clones the object database, not the working directory),
+# so they would silently be dropped from the filtered history. Untracked
+# files inside the four source directories would also make the later
+# `git submodule add` fail on a non-empty target directory. Check both.
+DIRTY="$(cd "$HOMELAB_DIR" && git status --porcelain)"
+if [[ -n "$DIRTY" ]]; then
+    echo "ERROR: homelab has uncommitted or untracked changes. Commit or stash everything first:" >&2
+    echo "$DIRTY" >&2
+    exit 1
+fi
+
+# --- Actual remotes ---
 # --- Actual remotes ---
 declare -A REMOTES=(
-    [llm]="git@github.com:PatrickPetrushonis/llm.git"
-    [nas]="git@github.com:PatrickPetrushonis/nas.git"
-    [system]="git@github.com:PatrickPetrushonis/system.git"
-    [plex]="git@github.com:PatrickPetrushonis/plex.git"
+    [llm]="https://github.com/PatrickPetrushonis/llm.git"
+    [nas]="https://github.com/PatrickPetrushonis/nas.git"
+    [system]="https://github.com/PatrickPetrushonis/system.git"
+    [plex]="https://github.com/PatrickPetrushonis/plex.git"
 )
 # video-encoder/ is renamed to plex/ as part of this split, not before it -
 # the rename happens inside the filtered clone, so parent history for that
@@ -53,6 +66,15 @@ declare -A SOURCE_DIRS=(
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 
+COMPLETED=()
+trap '
+    if [[ ${#COMPLETED[@]} -gt 0 && ${#COMPLETED[@]} -lt ${#REMOTES[@]} ]]; then
+        echo >&2
+        echo "STOPPED PARTWAY: completed [${COMPLETED[*]}], remaining [$(comm -23 <(printf "%s\n" "${!REMOTES[@]}" | sort) <(printf "%s\n" "${COMPLETED[@]}" | sort) | tr "\n" " ")]." >&2
+        echo "homelab is in a partially-migrated, uncommitted state - review \"git status\" inside it before re-running." >&2
+    fi
+' EXIT
+
 for name in "${!REMOTES[@]}"; do
     remote="${REMOTES[$name]}"
     src_dir="${SOURCE_DIRS[$name]}"
@@ -60,7 +82,7 @@ for name in "${!REMOTES[@]}"; do
 
     echo "=== Splitting ${src_dir}/ -> ${name} ==="
 
-    git clone "$HOMELAB_DIR" "$split_path"
+    git clone --no-local "$HOMELAB_DIR" "$split_path"
     (
         cd "$split_path"
         git filter-repo --path "$src_dir/" --path-rename "$src_dir/:"
@@ -79,6 +101,7 @@ for name in "${!REMOTES[@]}"; do
 
     echo "=== ${name} done ==="
     echo
+    COMPLETED+=("$name")
 done
 
 (
