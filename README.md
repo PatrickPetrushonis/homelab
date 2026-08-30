@@ -13,7 +13,13 @@ git submodule update --init --recursive
 .
 ├── README.md                  ← this file
 ├── .gitmodules                 tracks the 4 submodule URLs/branches
-├── submodule_ctl.sh             status / update-all / checkout-branches / bump <name>
+├── .gitignore                  backup archives, migration scratch dir, editor/OS cruft
+├── scripts/
+│   ├── submodule_ctl.sh                status / update-all / checkout-branches / bump <name>
+│   ├── restructure_to_submodules.sh    one-time migration (folders → submodules) — historical, do not re-run
+│   ├── restructure_to_hub.sh           earlier one-time migration (monolith → categorized folders) — historical, do not re-run
+│   ├── lint.sh                         shellcheck across scripts — verify scope still matches post-submodule-split
+│   └── .locks/
 ├── llm/           (submodule)  Ollama/Open WebUI stack, agent runtimes, creative RAG
 ├── nas/           (submodule)  DS220+ upgrade guide, NAS-transfer automation roadmap
 ├── system/        (submodule)  Canonical hardware/storage/network/Docker reference
@@ -22,33 +28,33 @@ git submodule update --init --recursive
 
 ## Where to look for what
 
-**Hardware, storage, network, or Docker facts** — `system/System Architecture.md` is canonical. Every other repo points here instead of re-stating hardware facts; update it, not the others, when something changes.
+**Hardware, storage, network, or Docker facts** — `system/README.md` is canonical. Every other repo used to point here directly; per the isolation rule, no repo but this parent does that now — this table is the only place that reference lives.
 
 **Encoding or renaming video files, Plex** — `plex/README.md`.
 
 **Local LLM / agent runtimes / RAG** — `llm/README.md`.
 
-**NAS / media library** — `nas/NAS_DS220_Upgrade_Guide.md` for the physical upgrade procedure, `nas/Automation_Roadmap.md` for transfer-automation status.
+**NAS / media library** — `nas/README.md`.
 
 ## Working with submodules
 
 **Check what's changed across all four:**
 ```bash
-./submodule_ctl.sh status
+./scripts/submodule_ctl.sh status
 ```
 
 **Pull the latest `main` into every submodule:**
 ```bash
-./submodule_ctl.sh update-all
+./scripts/submodule_ctl.sh update-all
 ```
 This updates your local working copies only. To make the parent repo point at the new commits (so a fresh clone gets them too), commit the bump per submodule:
 ```bash
-./submodule_ctl.sh bump llm
+./scripts/submodule_ctl.sh bump llm
 ```
 
 **Editing inside a submodule:** submodules land in detached HEAD after clone/update — this is normal git behavior, not a bug, but don't commit from there. Fix it first:
 ```bash
-./submodule_ctl.sh checkout-branches
+./scripts/submodule_ctl.sh checkout-branches
 cd llm
 # make changes, commit, push — normal git workflow inside llm/ from here
 cd ..
